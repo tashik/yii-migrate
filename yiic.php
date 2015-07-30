@@ -26,9 +26,9 @@ if ($env) {
   $env = '';
 }
 
-$config = @include("{$basepath}/config/migration{$env}.php");
+$config = @include("{$basepath}/application/configs/config.d/migration{$env}.php");
 if (!$config) {
-  throw new RuntimeException("Migration config in {$basepath}/config/migration.php not found, please use {$currentpath}/config/migration.php-default to create one");
+  throw new RuntimeException("Migration config in {$basepath}/application/configs/config.d/migration{$env}.php not found, please use {$currentpath}/config/migration.php-default to create one");
 }
 
 $config['commandMap'] = array(
