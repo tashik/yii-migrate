@@ -109,6 +109,37 @@ class AMigrateCommand extends \MigrateCommand {
     return parent::actionCreate($args);
   }
 
+  /**
+   * Оверрайд родного метода actionDown - умеет принимать название миграции на вход, и откатывать конкретную
+   * миграцию по ее названию. Если передать числовой значение (как и для родного метода) - будет вызвана стандартная
+   * логика мигратора yii
+   * @param $args - аргументы команднйо строки
+   * @return bool|int|void
+   */
+  public function actionDown($args)
+  {
+    $step=isset($args[0]) ? $args[0] : 1;
+    if (!is_numeric($step)) {
+      $db = $this->getDbConnection();
+      if ($db->schema->getTable($this->migrationTable, true) === null) {
+        $this->createMigrationHistoryTable();
+      }
+      $migration = $db->createCommand()
+        ->select('version')
+        ->from($this->migrationTable)
+        ->where("version = '{$step}'")
+        ->limit(1)
+        ->queryRow();
+      if (!empty($migration)) {
+        return $this->migrateDown($migration['version']);
+      } else {
+        echo "ERROR: undefined migartion {$step}";
+        return 1;
+      }
+    } else {
+      return parent::actionDown($args);
+    }
+  }
   protected function instantiateMigration($class) {
     if (preg_match('@^(.+):(.+)$@', $class, $matches)) {
       $class = $matches[2];
@@ -158,5 +189,17 @@ class AMigrateCommand extends \MigrateCommand {
       return 0;
     });
     return $migrations;
+  }
+
+  public function getHelp()
+  {
+    $help = parent::getHelp();
+    $help .= <<<EOD
+
+ * yiic migrate down migration_name
+   Reverts applied migration by name (version)
+EOD;
+    return $help;
+
   }
 }
