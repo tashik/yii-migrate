@@ -190,4 +190,16 @@ class AMigrateCommand extends \MigrateCommand {
     });
     return $migrations;
   }
+
+  public function getHelp()
+  {
+    $help = parent::getHelp();
+    $help .= <<<EOD
+
+ * yiic migrate down migration_name
+   Reverts applied migration by name (version)
+EOD;
+    return $help;
+
+  }
 }
