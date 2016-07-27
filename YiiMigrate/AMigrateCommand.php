@@ -119,27 +119,83 @@ class AMigrateCommand extends \MigrateCommand {
   public function actionDown($args)
   {
     $step=isset($args[0]) ? $args[0] : 1;
-    if (!is_numeric($step)) {
-      $db = $this->getDbConnection();
-      if ($db->schema->getTable($this->migrationTable, true) === null) {
-        $this->createMigrationHistoryTable();
-      }
-      $migration = $db->createCommand()
-        ->select('version')
-        ->from($this->migrationTable)
-        ->where("version = '{$step}'")
-        ->limit(1)
-        ->queryRow();
-      if (!empty($migration)) {
+    if (is_numeric($step)) {
+      return parent::actionDown($args);
+    }
+
+    $db = $this->getDbConnection();
+    if ($db->schema->getTable($this->migrationTable, true) === null) {
+      $this->createMigrationHistoryTable();
+    }
+    $migration = $db->createCommand()
+      ->select('version')
+      ->from($this->migrationTable)
+      ->where("version = '{$step}'")
+      ->limit(1)
+      ->queryRow();
+    if (!empty($migration)) {
+      echo "migrations for revert:\n{$migration['version']}\n";
+      if ($this->confirm('Revert this migration(s)?')) {
         return $this->migrateDown($migration['version']);
       } else {
-        echo "ERROR: undefined migartion {$step}";
         return 1;
       }
     } else {
-      return parent::actionDown($args);
+      $this->usageError("undefined migartion {$step}");
+      return 1;
     }
   }
+
+  /**
+   * Миграция указанного модуля. Умеет мигрировать как вверх, так и вниз
+   * Может искать миграции в модулях, заявленных в конфиге, или указанных в параметре команды. Может быть полезно для
+   * каких-либо служебных миграций, которые не должны выполняться автоматически при запуске мигратора
+   *
+   * Пример:  vendor/bin/migrate module down nsi nsi:m160727_094757_test_test_test
+   *          vendor/bin/migrate module up init=init/migrations
+   *
+   * @param $args - аргументы командной строки:
+   *                направление
+   *                имя модуля[=путь к2 модулю]
+   *                параметры для методов migration up/down
+   * @return bool|int|void
+   */
+  public function actionModule($args)
+  {
+    $direction = $args[0];
+    if (!in_array($direction, array('up', 'down'))) {
+      $this->usageError("undefined action");
+    }
+    if (!isset($args[1])) {
+      $this->usageError("no module specified");
+      return 1;
+    }
+    if (preg_match('/\=/', $args[1])) {
+      $moduleData = explode('=', $args[1]);
+    } else {
+      $moduleData[] = $args[1];
+    }
+    $this->module = $moduleData[0];
+    if (!isset($moduleData[1])) {
+      $this->migrationPath = $this->_getModuleMigrationPath($this->module);
+    } else {
+      $shortPath = (!defined('BASE_PATH')) ? $moduleData[1] : BASE_PATH . '/' . $moduleData[1];
+      $this->migrationPath = $shortPath;
+    }
+
+    if (empty($this->moduleMigrationPaths[$this->module])) {
+      $this->moduleMigrationPaths[$this->module] = $shortPath;
+    }
+
+    array_shift($args);
+    array_shift($args);
+    if ($direction == 'up') {
+      $this->actionUp($args);
+    } else {
+      $this->actionDown($args);
+    }
+  }
+
   protected function instantiateMigration($class) {
     if (preg_match('@^(.+):(.+)$@', $class, $matches)) {
       $class = $matches[2];
@@ -170,8 +226,14 @@ class AMigrateCommand extends \MigrateCommand {
     }
 
     if (is_array($this->moduleMigrationPaths)) {
-      foreach ($this->moduleMigrationPaths as $module=>$modulePath) {
-        $migrations = array_merge($migrations, $this->_getModuleMigrations($module, $applied));
+      // получалось, что даже при указании модуля выборка новых миграций шла по всем возможным модулям
+      // исправил
+      foreach ($this->moduleMigrationPaths as $moduleName=>$modulePath) {
+        $newMigrations = $this->_getModuleMigrations($moduleName, $applied);
+        if (true !== $module && $moduleName != $module) {
+          continue;
+        }
+        $migrations = array_merge($migrations, $newMigrations);
       }
     }
     usort($migrations, function($a, $b){
@@ -198,6 +260,21 @@ class AMigrateCommand extends \MigrateCommand {
 
  * yiic migrate down migration_name
    Reverts applied migration by name (version)
+   
+ * yiic migrate module up/down module_name[=module_path] [migrate up/down params]
+   Applies or reverts migrations only in specified module
+   You can use defined in config modules or custom modules with path. It may be useful for some system migrations 
+   for example.
+   required params are:
+      action:           up / down
+      module_name:      name of module
+      module_path*:     required if module not defined in config. You must use module_name=module_path
+   
+   Example:
+   yiic migrate module up mymodule
+   yiic migrate module down mymodule=path/to/module mymodule:m111111_111111_my_migration
+   
+   You also can use default migration params for up or down directions after module method required params
 EOD;
     return $help;
 
