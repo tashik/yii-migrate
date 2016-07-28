@@ -7,7 +7,9 @@ Yii::import('system.cli.commands.MigrateCommand');
 class AMigrateCommand extends \MigrateCommand {
 
   public $moduleMigrationPaths = 'application.{module}.migrations';
+  protected $systemMigrationPaths = '{module}.migrations';
   public $module = null;
+  public $system = null;
 
   protected function getTemplate() {
     if ($this->templateFile !== null) {
@@ -38,7 +40,13 @@ class AMigrateCommand extends \MigrateCommand {
 
   public function beforeAction($action, $params) {
     $app = Yii::app();
-    if (isset($app->migrateModules) && is_array($app->migrateModules)) {
+    if (isset($app->migrateSystem) && $this->system == true) {
+      $this->moduleMigrationPaths = $this->systemMigrationPaths;
+      foreach ($app->migrateSystem as $name => $path) {
+        Yii::setPathOfAlias($name, BASE_PATH);
+      }
+      $this->_initModuleMigrationPaths($app->migrateSystem);
+    } elseif (isset($app->migrateModules) && is_array($app->migrateModules)) {
       $this->_initModuleMigrationPaths($app->migrateModules);
     }
     return parent::beforeAction($action, $params);
@@ -88,12 +96,20 @@ class AMigrateCommand extends \MigrateCommand {
                  ->limit($limit);
 
     if (null===$modules && $this->module) {
-      $modules = $this->module;
+        $modules = $this->module;
     }
     if (true===$modules) {
       $select->where("version LIKE '%:m%'");
     } elseif (is_string($modules)) {
       $select->where("version LIKE '{$modules}:m%'");
+    } elseif (is_array($modules)) {
+      foreach ($modules as $i => $module) {
+        if ($i == 0) {
+          $select->where("version LIKE '{$module}:m%'");
+        } else {
+          $select->orWhere("version LIKE '{$module}:m%'");
+        }
+      }
     } else {
       $select->where("version NOT LIKE '%:m%'");
     }
@@ -119,27 +135,33 @@ class AMigrateCommand extends \MigrateCommand {
   public function actionDown($args)
   {
     $step=isset($args[0]) ? $args[0] : 1;
-    if (!is_numeric($step)) {
-      $db = $this->getDbConnection();
-      if ($db->schema->getTable($this->migrationTable, true) === null) {
-        $this->createMigrationHistoryTable();
-      }
-      $migration = $db->createCommand()
-        ->select('version')
-        ->from($this->migrationTable)
-        ->where("version = '{$step}'")
-        ->limit(1)
-        ->queryRow();
-      if (!empty($migration)) {
+    if (is_numeric($step)) {
+      return parent::actionDown($args);
+    }
+
+    $db = $this->getDbConnection();
+    if ($db->schema->getTable($this->migrationTable, true) === null) {
+      $this->createMigrationHistoryTable();
+    }
+    $migration = $db->createCommand()
+      ->select('version')
+      ->from($this->migrationTable)
+      ->where("version = '{$step}'")
+      ->limit(1)
+      ->queryRow();
+    if (!empty($migration)) {
+      echo "migrations for revert:\n{$migration['version']}\n";
+      if ($this->confirm('Revert this migration(s)?')) {
         return $this->migrateDown($migration['version']);
       } else {
-        echo "ERROR: undefined migartion {$step}";
         return 1;
       }
     } else {
-      return parent::actionDown($args);
+      $this->usageError("undefined migartion {$step}");
+      return 1;
     }
   }
+
   protected function instantiateMigration($class) {
     if (preg_match('@^(.+):(.+)$@', $class, $matches)) {
       $class = $matches[2];
@@ -155,12 +177,17 @@ class AMigrateCommand extends \MigrateCommand {
   }
 
   protected function getNewMigrations() {
-    if (!$this->module) {
+    if (!$this->module && !$this->system) {
       $migrations = parent::getNewMigrations();
     } else {
       $migrations = array();
     }
-    $module = $this->module ?: true;
+    if (!$this->module && !!$this->system) {
+      $module = array_keys(Yii::app()->migrateSystem);
+    }
+    if (!isset($module)) {
+      $module = $this->module ?: true;
+    }
 
     $applied=array();
     foreach($this->getMigrationHistory(-1, $module) as $version=>$time) {
@@ -170,8 +197,14 @@ class AMigrateCommand extends \MigrateCommand {
     }
 
     if (is_array($this->moduleMigrationPaths)) {
-      foreach ($this->moduleMigrationPaths as $module=>$modulePath) {
-        $migrations = array_merge($migrations, $this->_getModuleMigrations($module, $applied));
+      // получалось, что даже при указании модуля выборка новых миграций шла по всем возможным модулям
+      // исправил
+      foreach ($this->moduleMigrationPaths as $moduleName=>$modulePath) {
+        $newMigrations = $this->_getModuleMigrations($moduleName, $applied);
+        if (true !== $module && $moduleName != $module) {
+          continue;
+        }
+        $migrations = array_merge($migrations, $newMigrations);
       }
     }
     usort($migrations, function($a, $b){
@@ -198,6 +231,11 @@ class AMigrateCommand extends \MigrateCommand {
 
  * yiic migrate down migration_name
    Reverts applied migration by name (version)
+  
+ * yiic migrate --system=1
+   --system key declare migrations from system config migrateSystem
+   when you use it, migrations from migrateModules will be ignored
+   you can also set key --module to migrate only one of system components
 EOD;
     return $help;
 
