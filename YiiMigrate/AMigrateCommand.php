@@ -7,7 +7,9 @@ Yii::import('system.cli.commands.MigrateCommand');
 class AMigrateCommand extends \MigrateCommand {
 
   public $moduleMigrationPaths = 'application.{module}.migrations';
+  protected $systemMigrationPaths = '{module}.migrations';
   public $module = null;
+  public $system = null;
 
   protected function getTemplate() {
     if ($this->templateFile !== null) {
@@ -38,7 +40,13 @@ class AMigrateCommand extends \MigrateCommand {
 
   public function beforeAction($action, $params) {
     $app = Yii::app();
-    if (isset($app->migrateModules) && is_array($app->migrateModules)) {
+    if (isset($app->migrateSystem) && $this->system == true) {
+      $this->moduleMigrationPaths = $this->systemMigrationPaths;
+      foreach ($app->migrateSystem as $name => $path) {
+        Yii::setPathOfAlias($name, BASE_PATH);
+      }
+      $this->_initModuleMigrationPaths($app->migrateSystem);
+    } elseif (isset($app->migrateModules) && is_array($app->migrateModules)) {
       $this->_initModuleMigrationPaths($app->migrateModules);
     }
     return parent::beforeAction($action, $params);
@@ -88,12 +96,20 @@ class AMigrateCommand extends \MigrateCommand {
                  ->limit($limit);
 
     if (null===$modules && $this->module) {
-      $modules = $this->module;
+        $modules = $this->module;
     }
     if (true===$modules) {
       $select->where("version LIKE '%:m%'");
     } elseif (is_string($modules)) {
       $select->where("version LIKE '{$modules}:m%'");
+    } elseif (is_array($modules)) {
+      foreach ($modules as $i => $module) {
+        if ($i == 0) {
+          $select->where("version LIKE '{$module}:m%'");
+        } else {
+          $select->orWhere("version LIKE '{$module}:m%'");
+        }
+      }
     } else {
       $select->where("version NOT LIKE '%:m%'");
     }
@@ -146,56 +162,6 @@ class AMigrateCommand extends \MigrateCommand {
     }
   }
 
-  /**
-   * Миграция указанного модуля. Умеет мигрировать как вверх, так и вниз
-   * Может искать миграции в модулях, заявленных в конфиге, или указанных в параметре команды. Может быть полезно для
-   * каких-либо служебных миграций, которые не должны выполняться автоматически при запуске мигратора
-   *
-   * Пример:  vendor/bin/migrate module down nsi nsi:m160727_094757_test_test_test
-   *          vendor/bin/migrate module up init=init/migrations
-   *
-   * @param $args - аргументы командной строки:
-   *                направление
-   *                имя модуля[=путь к2 модулю]
-   *                параметры для методов migration up/down
-   * @return bool|int|void
-   */
-  public function actionModule($args)
-  {
-    $direction = $args[0];
-    if (!in_array($direction, array('up', 'down'))) {
-      $this->usageError("undefined action");
-    }
-    if (!isset($args[1])) {
-      $this->usageError("no module specified");
-      return 1;
-    }
-    if (preg_match('/\=/', $args[1])) {
-      $moduleData = explode('=', $args[1]);
-    } else {
-      $moduleData[] = $args[1];
-    }
-    $this->module = $moduleData[0];
-    if (!isset($moduleData[1])) {
-      $this->migrationPath = $this->_getModuleMigrationPath($this->module);
-    } else {
-      $shortPath = (!defined('BASE_PATH')) ? $moduleData[1] : BASE_PATH . '/' . $moduleData[1];
-      $this->migrationPath = $shortPath;
-    }
-
-    if (empty($this->moduleMigrationPaths[$this->module])) {
-      $this->moduleMigrationPaths[$this->module] = $shortPath;
-    }
-
-    array_shift($args);
-    array_shift($args);
-    if ($direction == 'up') {
-      $this->actionUp($args);
-    } else {
-      $this->actionDown($args);
-    }
-  }
-
   protected function instantiateMigration($class) {
     if (preg_match('@^(.+):(.+)$@', $class, $matches)) {
       $class = $matches[2];
@@ -211,12 +177,17 @@ class AMigrateCommand extends \MigrateCommand {
   }
 
   protected function getNewMigrations() {
-    if (!$this->module) {
+    if (!$this->module && !$this->system) {
       $migrations = parent::getNewMigrations();
     } else {
       $migrations = array();
     }
-    $module = $this->module ?: true;
+    if (!$this->module && !!$this->system) {
+      $module = array_keys(Yii::app()->migrateSystem);
+    }
+    if (!isset($module)) {
+      $module = $this->module ?: true;
+    }
 
     $applied=array();
     foreach($this->getMigrationHistory(-1, $module) as $version=>$time) {
@@ -260,21 +231,11 @@ class AMigrateCommand extends \MigrateCommand {
 
  * yiic migrate down migration_name
    Reverts applied migration by name (version)
-   
- * yiic migrate module up/down module_name[=module_path] [migrate up/down params]
-   Applies or reverts migrations only in specified module
-   You can use defined in config modules or custom modules with path. It may be useful for some system migrations 
-   for example.
-   required params are:
-      action:           up / down
-      module_name:      name of module
-      module_path*:     required if module not defined in config. You must use module_name=module_path
-   
-   Example:
-   yiic migrate module up mymodule
-   yiic migrate module down mymodule=path/to/module mymodule:m111111_111111_my_migration
-   
-   You also can use default migration params for up or down directions after module method required params
+  
+ * yiic migrate --system=1
+   --system key declare migrations from system config migrateSystem
+   when you use it, migrations from migrateModules will be ignored
+   you can also set key --module to migrate only one of system components
 EOD;
     return $help;
 
