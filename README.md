@@ -9,11 +9,11 @@ Installation
 * Add to composer.json:
     <code class="json"><pre>
     "require": {
-        "grundik/yii-migrate": "*@dev"
+        "tashik/yii-migrate": "*@dev"
     },
     "repositories": [{
       "type": "vcs",
-      "url": "https://github.com/Grundik/yii-migrate.git"
+      "url": "https://github.com/tashik/yii-migrate.git"
     }, {
       "type": "vcs",
       "url": "https://github.com/yiisoft/yii.git"
@@ -23,13 +23,14 @@ Installation
 * Run composer: <pre>composer update</pre>
 
 * Create configuration file:
-    <pre>cp vendor/grundik/yii-migrate/config/migrations.php-default config/migrations.php</pre>
+    <pre>cp vendor/tashik/yii-migrate/config/migrations.php-default configs/config.d/migration.php</pre>
 
 * Edit configuration file to fulfill your needs: set database credentials, migrations path
 
 * Run
     * vendor/bin/migrate - to perform migrate;
     * vendor/bin/migrate create <name> - to create new migration.
+    * vendor/bin/migrate --system=1 - to execute system migrations, not connected with any system module
 
 See also: http://www.yiiframework.com/doc/guide/1.1/en/database.migration
 
